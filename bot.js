@@ -34,7 +34,7 @@ app.get('/health', (req, res) => {
 // Start server
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`🌐 Health check: https://your-app-name.herokuapp.com/health`);
+  console.log(`🌐 Health check available at /health`);
 });
 
 // Get Telegram token from environment
@@ -128,43 +128,68 @@ Simply send any YouTube link to get started!
   bot.sendMessage(chatId, welcomeMessage, { parse_mode: 'Markdown' });
 });
 
-// [Rest of your bot functions remain the same...]
-// Keep all your downloadYouTube, downloadInstagram, etc. functions
-// Keep the message handlers and other logic
+// Enhanced YouTube Downloader
+async function downloadYouTube(url, quality = 'highest') {
+  try {
+    console.log('📥 Downloading YouTube video:', url);
+    
+    // Validate URL
+    if (!ytdl.validateURL(url)) {
+      throw new Error('Invalid YouTube URL');
+    }
 
-// Add a function to log bot activity
-function logActivity(chatId, username, action, platform = 'unknown') {
-  const timestamp = new Date().toISOString();
-  console.log(`📝 Activity: ${action} | User: @${username} | Platform: ${platform} | Chat: ${chatId} | Time: ${timestamp}`);
-}
+    const info = await ytdl.getInfo(url);
+    let format;
 
-// Enhanced message handler with logging
-bot.on('message', async (msg) => {
-  const chatId = msg.chat.id;
-  const username = msg.from.username || 'unknown';
-  const text = msg.text;
+    if (quality === 'audio') {
+      format = ytdl.chooseFormat(info.formats, { 
+        quality: 'highestaudio',
+        filter: 'audioonly'
+      });
+    } else {
+      format = ytdl.chooseFormat(info.formats, { 
+        quality: quality === 'highest' ? 'highest' : 'lowest',
+        filter: 'audioandvideo'
+      });
+    }
 
-  // Skip commands
-  if (text.startsWith('/')) return;
+    if (!format) {
+      throw new Error('No suitable format found for this video');
+    }
 
-  // URL detection
-  const urlRegex = /https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)/g;
-  const urls = text.match(urlRegex);
-
-  if (urls && urls.length > 0) {
-    const url = urls[0];
-    logActivity(chatId, username, 'download_request', detectPlatform(url));
-    await handleUniversalDownload(chatId, url);
+    return {
+      success: true,
+      title: info.videoDetails.title,
+      url: format.url,
+      duration: parseInt(info.videoDetails.lengthSeconds),
+      thumbnail: info.videoDetails.thumbnails[0]?.url || '',
+      author: info.videoDetails.author?.name || 'Unknown',
+      views: info.videoDetails.viewCount || 0,
+      quality: format.qualityLabel || 'Unknown',
+      size: format.contentLength ? (format.contentLength / (1024 * 1024)).toFixed(2) + 'MB' : 'Unknown'
+    };
+  } catch (error) {
+    console.log('YouTube download error:', error.message);
+    return {
+      success: false,
+      error: 'YouTube: ' + error.message
+    };
   }
-});
-
-function detectPlatform(url) {
-  if (url.includes('youtube.com') || url.includes('youtu.be')) return 'youtube';
-  if (url.includes('instagram.com')) return 'instagram';
-  if (url.includes('tiktok.com')) return 'tiktok';
-  if (url.includes('twitter.com') || url.includes('x.com')) return 'twitter';
-  return 'unknown';
 }
 
-console.log('✅ Bot initialization complete!');
-console.log('🚀 Deployment ready for Heroku + GitHub');
+// Instagram Downloader using external API
+async function downloadInstagram(url) {
+  try {
+    console.log('📥 Downloading Instagram video:', url);
+    
+    // Using Instagram download API
+    const response = await axios.get(`https://api.instagram.com/download?url=${encodeURIComponent(url)}`, {
+      timeout: 10000
+    });
+    
+    if (response.data && response.data.video_url) {
+      return {
+        success: true,
+        title: 'Instagram Video',
+        url: response.data.video_url,
+        author: response.data
