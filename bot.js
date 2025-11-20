@@ -23,12 +23,15 @@ console.log('🤖 Bot started successfully!');
 
 // Configuration
 const REQUIRED_CHANNEL = '@starlife_advert'; // Your channel
+const CHANNEL_ID = '@starlife_advert'; // Channel to send broadcasts
+const ADMIN_IDS = ['YOUR_ADMIN_USER_ID']; // Add your Telegram user ID here
 
 // User statistics storage (in production, use a database)
 const userStats = {
   totalUsers: new Set(),
   monthlyUsers: new Set(),
-  currentMonth: new Date().getMonth() + '-' + new Date().getFullYear()
+  currentMonth: new Date().getMonth() + '-' + new Date().getFullYear(),
+  userChatIds: new Set() // Store all user chat IDs for broadcasting
 };
 
 // Function to check if user joined channel
@@ -84,7 +87,7 @@ After joining, you'll be able to download TikTok and YouTube videos! 🚀
 }
 
 // Update user statistics
-function updateUserStats(userId) {
+function updateUserStats(userId, chatId) {
   const currentMonth = new Date().getMonth() + '-' + new Date().getFullYear();
   
   // Reset monthly stats if new month
@@ -95,6 +98,67 @@ function updateUserStats(userId) {
   
   userStats.totalUsers.add(userId);
   userStats.monthlyUsers.add(userId);
+  userStats.userChatIds.add(chatId);
+}
+
+// Function to send message to channel
+async function sendToChannel(message) {
+  try {
+    await bot.sendMessage(CHANNEL_ID, message, { parse_mode: 'Markdown' });
+    return true;
+  } catch (error) {
+    console.log('Error sending to channel:', error.message);
+    return false;
+  }
+}
+
+// Function to broadcast to all users
+async function broadcastToUsers(message) {
+  let successCount = 0;
+  let failCount = 0;
+  
+  for (const chatId of userStats.userChatIds) {
+    try {
+      await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+      successCount++;
+      
+      // Add delay to avoid hitting rate limits
+      await new Promise(resolve => setTimeout(resolve, 100));
+    } catch (error) {
+      console.log(`Failed to send to ${chatId}:`, error.message);
+      failCount++;
+    }
+  }
+  
+  return { successCount, failCount };
+}
+
+// Function to send welcome message to new users
+async function sendWelcomeMessage(chatId, userName) {
+  const welcomeMessage = `
+👋 Welcome *${userName || 'there'}*! 
+
+Thank you for using @snipsavevideodownloaderbot! 🎬
+
+I can download TikTok and YouTube videos for you. Here's what I can do:
+
+✅ Download TikTok videos (no watermark)
+✅ Download YouTube videos
+✅ Fast and reliable
+
+Just send me a link and I'll handle the rest! 🚀
+
+Need help? Use /help command.
+  `;
+  
+  await bot.sendMessage(chatId, welcomeMessage, { parse_mode: 'Markdown' });
+  
+  // Also notify channel about new user (optional)
+  try {
+    await sendToChannel(`🆕 New user started the bot!\n\n👤 User: ${userName || 'Anonymous'}\n📊 Total users: ${userStats.totalUsers.size}`);
+  } catch (error) {
+    console.log('Failed to notify channel about new user');
+  }
 }
 
 // Stats command
@@ -107,7 +171,7 @@ bot.onText(/\/stats/, async (msg) => {
     return sendJoinMessage(chatId);
   }
   
-  updateUserStats(userId);
+  updateUserStats(userId, chatId);
   
   const statsMessage = `
 📊 *Bot Statistics*
@@ -115,6 +179,7 @@ bot.onText(/\/stats/, async (msg) => {
 👥 Total Users: ${userStats.totalUsers.size}
 📅 Monthly Users: ${userStats.monthlyUsers.size}
 📈 Current Month: ${userStats.currentMonth}
+💬 Active Chats: ${userStats.userChatIds.size}
 
 Thank you for being part of our community! ❤️
   `;
@@ -122,17 +187,65 @@ Thank you for being part of our community! ❤️
   bot.sendMessage(chatId, statsMessage, { parse_mode: 'Markdown' });
 });
 
+// Admin broadcast command
+bot.onText(/\/broadcast (.+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+  
+  // Check if user is admin (you can add multiple admin IDs)
+  if (!ADMIN_IDS.includes(userId.toString())) {
+    return bot.sendMessage(chatId, '❌ You are not authorized to use this command.');
+  }
+  
+  const broadcastMessage = match[1];
+  
+  // Send confirmation
+  await bot.sendMessage(chatId, '📢 Starting broadcast to all users...');
+  
+  // Send broadcast
+  const result = await broadcastToUsers(broadcastMessage);
+  
+  // Send results
+  await bot.sendMessage(chatId, 
+    `📊 Broadcast Results:\n\n✅ Success: ${result.successCount}\n❌ Failed: ${result.failCount}\n📨 Total: ${userStats.userChatIds.size}`
+  );
+  
+  // Also send to channel
+  await sendToChannel(`📢 Admin broadcast sent:\n\n${broadcastMessage}\n\n📊 Results: ${result.successCount} successful, ${result.failCount} failed`);
+});
+
+// Send message to channel command
+bot.onText(/\/channelmsg (.+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+  
+  // Check if user is admin
+  if (!ADMIN_IDS.includes(userId.toString())) {
+    return bot.sendMessage(chatId, '❌ You are not authorized to use this command.');
+  }
+  
+  const channelMessage = match[1];
+  const success = await sendToChannel(channelMessage);
+  
+  if (success) {
+    await bot.sendMessage(chatId, '✅ Message sent to channel successfully!');
+  } else {
+    await bot.sendMessage(chatId, '❌ Failed to send message to channel.');
+  }
+});
+
 // Callback handler for join check
 bot.on('callback_query', async (callbackQuery) => {
   const message = callbackQuery.message;
   const userId = callbackQuery.from.id;
   const chatId = message.chat.id;
+  const userName = callbackQuery.from.first_name;
   
   if (callbackQuery.data === 'check_joined') {
     const isMember = await checkChannelMembership(userId);
     
     if (isMember) {
-      updateUserStats(userId);
+      updateUserStats(userId, chatId);
       await bot.editMessageText(
         `✅ *Welcome! Channel membership verified!*\n\nNow you can use the bot freely! 🎉\n\nJust send me a TikTok or YouTube link to download videos.\n\nUse /stats to see user statistics.`,
         {
@@ -141,6 +254,9 @@ bot.on('callback_query', async (callbackQuery) => {
           parse_mode: 'Markdown'
         }
       );
+      
+      // Send welcome message
+      await sendWelcomeMessage(chatId, userName);
     } else {
       await bot.answerCallbackQuery(callbackQuery.id, {
         text: '❌ Please join the channel first, then click here!',
@@ -206,7 +322,7 @@ function extractYouTubeId(url) {
 }
 
 // Main download handler
-async function handleDownload(chatId, url, userId) {
+async function handleDownload(chatId, url, userId, userName) {
   try {
     // Check channel membership first
     const isMember = await checkChannelMembership(userId);
@@ -215,7 +331,7 @@ async function handleDownload(chatId, url, userId) {
     }
     
     // Update stats for active user
-    updateUserStats(userId);
+    updateUserStats(userId, chatId);
     
     await bot.sendChatAction(chatId, 'typing');
     
@@ -234,6 +350,13 @@ async function handleDownload(chatId, url, userId) {
       await bot.sendVideo(chatId, result.url, {
         caption: `🎬 ${result.title}\n👤 ${result.author}\n\n✅ @snipsavevideodownloaderbot`
       });
+      
+      // Notify channel about successful download (optional)
+      try {
+        await sendToChannel(`📥 New download:\n\n👤 User: ${userName}\n🎬 Platform: ${url.includes('tiktok.com') ? 'TikTok' : 'YouTube'}\n📊 Total downloads: ${userStats.totalUsers.size}`);
+      } catch (error) {
+        console.log('Failed to notify channel about download');
+      }
     } else {
       await bot.sendMessage(chatId, `❌ ${result.error}\n\n💡 Try a different video or platform.`);
     }
@@ -241,7 +364,7 @@ async function handleDownload(chatId, url, userId) {
   } catch (error) {
     console.log('Error:', error.message);
     await bot.sendMessage(chatId, 
-      '❌ Download failed. Try:\n• TikTok links (work best)\n• Different videos\n• Shorter videos'
+      '❌ Download failed. Try:\n• TikTok links (work best)\n• Different videos\nn• Shorter videos'
     );
   }
 }
@@ -250,6 +373,7 @@ async function handleDownload(chatId, url, userId) {
 bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
+  const userName = msg.from.first_name;
   
   // Check if user is in channel
   const isMember = await checkChannelMembership(userId);
@@ -259,7 +383,7 @@ bot.onText(/\/start/, async (msg) => {
   }
   
   // User is member, update stats and show welcome
-  updateUserStats(userId);
+  updateUserStats(userId, chatId);
   
   const welcomeMessage = `
 🎬 *Video Downloader Bot* 🎬
@@ -282,6 +406,9 @@ TikTok links work instantly! 🎯
   `;
   
   bot.sendMessage(chatId, welcomeMessage, { parse_mode: 'Markdown' });
+  
+  // Send additional welcome message
+  await sendWelcomeMessage(chatId, userName);
 });
 
 // Handle all messages
@@ -289,12 +416,13 @@ bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
   const userId = msg.from.id;
+  const userName = msg.from.first_name;
   
   if (!text || text.startsWith('/')) return;
   
   // Simple URL detection
   if (text.includes('http') && (text.includes('tiktok.com') || text.includes('youtube.com') || text.includes('youtu.be'))) {
-    handleDownload(chatId, text, userId);
+    handleDownload(chatId, text, userId, userName);
   } else {
     // Check membership for any other message too
     const isMember = await checkChannelMembership(userId);
@@ -315,7 +443,7 @@ bot.onText(/\/help/, async (msg) => {
     return sendJoinMessage(chatId);
   }
   
-  updateUserStats(userId);
+  updateUserStats(userId, chatId);
   
   bot.sendMessage(chatId, 
     `🆘 *Quick Help*\n\n` +
@@ -323,13 +451,39 @@ bot.onText(/\/help/, async (msg) => {
     `2. Paste here\n` +
     `3. Get video instantly! 🎬\n\n` +
     `💡 TikTok links work best!\n\n` +
-    `📊 Use /stats to see user statistics`,
+    `📊 Use /stats to see user statistics\n` +
+    `📢 Join our channel: @starlife_advert`,
     { parse_mode: 'Markdown' }
   );
 });
 
+// Admin commands help
+bot.onText(/\/admin/, async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+  
+  if (!ADMIN_IDS.includes(userId.toString())) {
+    return bot.sendMessage(chatId, '❌ You are not authorized to use this command.');
+  }
+  
+  const adminHelp = `
+🛠 *Admin Commands*
+
+/broadcast [message] - Send message to all users
+/channelmsg [message] - Send message to channel
+/stats - View bot statistics
+
+Example:
+/broadcast Hello users! New feature added!
+/channelmsg Channel announcement! 
+  `;
+  
+  bot.sendMessage(chatId, adminHelp, { parse_mode: 'Markdown' });
+});
+
 console.log('✅ Bot is ready and running!');
 console.log('📢 Channel requirement: ENABLED');
+console.log('📨 Messaging features: ENABLED');
 console.log('🎯 TikTok: WORKING');
 console.log('📹 YouTube: WORKING');
 console.log('📊 User stats: ENABLED');
