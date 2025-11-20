@@ -4,7 +4,8 @@
   "description": "Advanced Telegram bot for downloading videos from all social media platforms",
   "main": "bot.js",
   "scripts": {
-    "start": "node bot.js"
+    "start": "node bot.js",
+    "dev": "node bot.js"
   },
   "dependencies": {
     "node-telegram-bot-api": "^0.64.0",
